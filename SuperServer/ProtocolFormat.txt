@@ -1,0 +1,20 @@
+Messages sent to the server
+Bytes:
+0-6: magic cookie, "DarkSS"
+7-21: either the store or request GUID.
+22: mode, 0 is store, 1 is get
+(for store packets only)
+23: number of v4 addresses to store
+(4 * number of v4) IPv4 addresses.
+24 + (4 * number of v4): number of v6 addresses to store
+(16 * number of v6) IPv6 addresses.
+
+Messages sent from the server:
+0-22: Echo'd the sent bytes, this is to identify the request client side.
+(for store packets only)
+23: accepted, 1 = yes
+(for get packets only)
+23: number of v4 addresses to store
+(4 * number of v4) IPv4 addresses.
+24 + (4 * number of v4): number of v6 addresses to store
+(16 * number of v6) IPv6 addresses.

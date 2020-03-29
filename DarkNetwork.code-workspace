@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "DarkNetworkTest"
+		},
+		{
+			"path": "DarkNetworkUDP"
+		},
+		{
+			"path": "SuperServer"
+		}
+	],
+	"settings": {}
+}

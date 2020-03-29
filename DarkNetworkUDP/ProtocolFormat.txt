@@ -1,0 +1,32 @@
+All messages are TLV encoded with the following format:
+Bytes:
+0-3: "DARK", magic header
+4-7: Type, int32
+8-11: Length, int32
+(data of Length bytes long)
+
+DarkNetworkUDP negative message types are used for the library itself, implementers can use ID's 0 or higher.
+
+Heartbeat Type -1
+Bytes:
+0-7: Send Time
+
+Latency Type -2 (Echo of Heartbeat Type -1 back to the source)
+Bytes:
+0-7: Send Time
+
+Ordered Type -3
+Bytes:
+0-3: Order ID, Int32, wraps around back to 0 after hitting the max value
+(Original message encapsulated)
+
+Reliable Type -4
+Bytes:
+0-3: Reliable ID
+4-7: 500 byte segment ID
+8-11: Total length
+12-511(max): data of segment
+
+Reliable ACK -5:
+0-3: Reliable ID
+4-7: 500 byte segment ID received

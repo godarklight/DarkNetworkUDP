@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{45C6BC63-4211-4E28-83D2-DDCBE29956DC}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <RootNamespace>DarkNetworkUDP</RootNamespace>
+    <AssemblyName>DarkNetworkUDP</AssemblyName>
+    <TargetFrameworkVersion>v3.5</TargetFrameworkVersion>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug</OutputPath>
+    <DefineConstants>DEBUG;NETFRAMEWORK</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <ConsolePause>false</ConsolePause>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release</OutputPath>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <ConsolePause>false</ConsolePause>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\..\..\..\DarkNetworkUDP\ByteArray.cs">
+      <Link>ByteArray.cs</Link>
+    </Compile>
+    <Compile Include="..\..\..\..\DarkNetworkUDP\ByteRecycler.cs">
+      <Link>ByteRecycler.cs</Link>
+    </Compile>
+    <Compile Include="..\..\..\..\DarkNetworkUDP\Connection.cs">
+      <Link>Connection.cs</Link>
+    </Compile>
+    <Compile Include="..\..\..\..\DarkNetworkUDP\DarkConfig.cs">
+      <Link>DarkConfig.cs</Link>
+    </Compile>
+    <Compile Include="..\..\..\..\DarkNetworkUDP\DarkNetwork.cs">
+      <Link>DarkNetwork.cs</Link>
+    </Compile>
+    <Compile Include="..\..\..\..\DarkNetworkUDP\DarkUtils.cs">
+      <Link>DarkUtils.cs</Link>
+    </Compile>
+    <Compile Include="..\..\..\..\DarkNetworkUDP\NetworkCallback.cs">
+      <Link>NetworkCallback.cs</Link>
+    </Compile>
+    <Compile Include="..\..\..\..\DarkNetworkUDP\NetworkHandler.cs">
+      <Link>NetworkHandler.cs</Link>
+    </Compile>
+    <Compile Include="..\..\..\..\DarkNetworkUDP\NetworkMessage.cs">
+      <Link>NetworkMessage.cs</Link>
+    </Compile>
+    <Compile Include="..\..\..\..\DarkNetworkUDP\Recycler.cs">
+      <Link>Recycler.cs</Link>
+    </Compile>
+    <Compile Include="..\..\..\..\DarkNetworkUDP\ReliableMessageHandler.cs">
+      <Link>ReliableMessageHandler.cs</Link>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\..\..\DarkNetworkUDP\DarkNetworkUDP.csproj">
+      <Link>DarkNetworkUDP.csproj</Link>
+    </None>
+  </ItemGroup>
+  <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
+</Project>
