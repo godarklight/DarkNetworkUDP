@@ -16,7 +16,6 @@ namespace DarkNetworkUDP
         private DarkNetwork<T> network;
         private Dictionary<Guid, Connection<T>> connections = new Dictionary<Guid, Connection<T>>();    
         private Connection<T> serverConnection;
-        private IPEndPoint serverAddress;
 
         public NetworkHandler(bool useMessagePump)
         {
@@ -37,20 +36,11 @@ namespace DarkNetworkUDP
             this.network = network;
         }
 
-        internal void SetServerAddress(IPEndPoint endPoint)
-        {
-            this.serverConnection = new Connection<T>();
-            this.serverConnection.handler = this;
-            this.serverConnection.reliableMessageHandler = new ReliableMessageHandler<T>(this.serverConnection, this);
-            this.serverConnection.remoteEndpoint = endPoint;
-            this.serverAddress = endPoint;
-        }
-
         public void RegisterCallback(int id, NetworkCallback<T> callback)
         {
             if (id < 0)
             {
-                throw new ArgumentOutOfRangeException("Implementers must only use positive message ID's");
+                throw new ArgumentOutOfRangeException();
             }
             callbacks[id] = callback;
         }
@@ -81,15 +71,15 @@ namespace DarkNetworkUDP
             if (!connections.ContainsKey(messageOwner))
             {
                 Connection<T> connection = null;
-                if (endPoint.Equals(serverAddress))
-                {
-                    connection = serverConnection;
-                }
                 if (connection == null)
                 {
                     connection = new Connection<T>();
                     connection.handler = this;
                     connection.reliableMessageHandler = new ReliableMessageHandler<T>(connection, this);
+                    if (network.clientMode && serverConnection == null)
+                    {
+                        serverConnection = connection;
+                    }
                 }
                 connection.lastReceiveTime = DateTime.UtcNow.Ticks;
                 connection.remoteEndpoint = endPoint;
@@ -111,7 +101,7 @@ namespace DarkNetworkUDP
             }
             NetworkMessage nm = NetworkMessage.Create(messageType, messageLength);
             nm.owner = messageOwner;
-            if (nm.data.Length > 0)
+            if (nm.data != null && nm.data.Length > 0)
             {
                 Array.Copy(data, 12, nm.data.data, 0, nm.data.Length);
             }

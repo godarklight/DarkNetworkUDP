@@ -8,6 +8,7 @@ namespace DarkNetworkUDP
 {
     public class DarkNetwork<T>
     {
+        internal bool clientMode;
         private bool running;
         private NetworkHandler<T> handler;
         private byte[] sendBuffer = new byte[2048];
@@ -26,6 +27,21 @@ namespace DarkNetworkUDP
             Setup(listenAddress, handler);
         }
 
+        public void SetupClient(IPEndPoint[] connectAddresses, NetworkHandler<T> handler)
+        {
+            if (running)
+            {
+                return;
+            }
+            IPEndPoint any = new IPEndPoint(IPAddress.IPv6Any, 0);
+            Setup(any, handler);
+            foreach (IPEndPoint connectAddress in connectAddresses)
+            {
+                SendInitialHeartbeat(connectAddress);
+            }
+            clientMode = true;
+        }
+
         public void SetupClient(IPEndPoint connectAddress, NetworkHandler<T> handler)
         {
             if (running)
@@ -34,7 +50,8 @@ namespace DarkNetworkUDP
             }
             IPEndPoint any = new IPEndPoint(IPAddress.IPv6Any, 0);
             Setup(any, handler);
-            handler.SetServerAddress(connectAddress);
+            SendInitialHeartbeat(connectAddress);
+            clientMode = true;
         }
 
         private void Setup(IPEndPoint bindAddress, NetworkHandler<T> handler)
@@ -182,6 +199,20 @@ namespace DarkNetworkUDP
                     }
                 }
                 handler.SendHeartbeat();
+            }
+        }
+
+        byte[] initialHeartBeat = new byte[20];
+        private void SendInitialHeartbeat(IPEndPoint endPoint)
+        {
+            DarkUtils.WriteMagicHeader(initialHeartBeat, 0);
+            DarkUtils.WriteInt32ToByteArray(-1, initialHeartBeat, 4);
+            DarkUtils.WriteInt32ToByteArray(8, initialHeartBeat, 8);
+            DarkUtils.WriteInt64ToByteArray(DateTime.UtcNow.Ticks, initialHeartBeat, 12);
+            //Send 4 times.
+            for (int i = 0; i < 4; i++)
+            {
+                socket.SendTo(initialHeartBeat, endPoint);
             }
         }
 
