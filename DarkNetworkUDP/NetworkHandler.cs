@@ -12,9 +12,9 @@ namespace DarkNetworkUDP
         private Action<Connection<T>> disconnectCallback;
         private List<Guid> disconnectList = new List<Guid>();
         private Dictionary<int, NetworkCallback<T>> callbacks = new Dictionary<int, NetworkCallback<T>>();
-        private List<NetworkMessage> messages;
+        private List<QueuedMessage<T>> messages;
         private DarkNetwork<T> network;
-        private Dictionary<Guid, Connection<T>> connections = new Dictionary<Guid, Connection<T>>();    
+        private Dictionary<Guid, Connection<T>> connections = new Dictionary<Guid, Connection<T>>();
         private Connection<T> serverConnection;
 
         public NetworkHandler(bool useMessagePump)
@@ -22,7 +22,7 @@ namespace DarkNetworkUDP
             this.useMessagePump = useMessagePump;
             if (useMessagePump)
             {
-                messages = new List<NetworkMessage>();
+                messages = new List<QueuedMessage<T>>();
             }
             callbacks.Add(-1, HandleHeartbeat);
             callbacks.Add(-2, HandleLatency);
@@ -56,7 +56,7 @@ namespace DarkNetworkUDP
             disconnectCallback = callback;
         }
 
-        internal void Handle(byte[] data, int length, IPEndPoint endPoint)
+        internal void HandleRaw(byte[] data, int length, IPEndPoint endPoint)
         {
             if (length < 12)
             {
@@ -67,10 +67,10 @@ namespace DarkNetworkUDP
             {
                 return;
             }
+            Connection<T> connection = null;
             Guid messageOwner = DarkUtils.GuidFromIPEndpoint(endPoint);
             if (!connections.ContainsKey(messageOwner))
             {
-                Connection<T> connection = null;
                 if (connection == null)
                 {
                     connection = new Connection<T>();
@@ -92,6 +92,7 @@ namespace DarkNetworkUDP
                     connection.state = connectCallback(connection);
                 }
             }
+            connection = connections[messageOwner];
             int messageType = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(data, 4));
             int messageLength = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(data, 8));
             if (length < messageLength + 12)
@@ -99,28 +100,34 @@ namespace DarkNetworkUDP
                 //Malformed message
                 return;
             }
-            NetworkMessage nm = NetworkMessage.Create(messageType, messageLength);
-            nm.owner = messageOwner;
+            NetworkMessage nm = NetworkMessage.Create(messageType, messageLength, NetworkMessageType.UNORDERED_UNRELIABLE);
             if (nm.data != null && nm.data.Length > 0)
             {
                 Array.Copy(data, 12, nm.data.data, 0, nm.data.Length);
             }
+            Handle(nm, connection);
+        }
+
+        public void Handle(NetworkMessage nm, Connection<T> connection)
+        {
             if (useMessagePump && nm.type >= 0)
             {
                 lock (messages)
                 {
-                    messages.Add(nm);
+                    QueuedMessage<T> qm = Recycler<QueuedMessage<T>>.GetObject();
+                    qm.networkMessage = nm;
+                    qm.connection = connection;
+                    messages.Add(qm);
                 }
             }
             else
             {
-                HandleReal(nm);
+                HandleReal(nm, connection);
             }
         }
 
-        private void HandleReal(NetworkMessage nm)
+        private void HandleReal(NetworkMessage nm, Connection<T> connection)
         {
-            Connection<T> connection = connections[nm.owner];
             connection.lastReceiveTime = DateTime.UtcNow.Ticks;
             if (callbacks.ContainsKey(nm.type))
             {
@@ -148,7 +155,7 @@ namespace DarkNetworkUDP
                     if (currentTime > (c.Value.lastHeartbeatTime + TimeSpan.TicksPerSecond))
                     {
                         c.Value.lastHeartbeatTime = currentTime;
-                        NetworkMessage nm = NetworkMessage.Create(-1, 8);
+                        NetworkMessage nm = NetworkMessage.Create(-1, 8, NetworkMessageType.UNORDERED_UNRELIABLE);
                         DarkUtils.WriteInt64ToByteArray(DateTime.UtcNow.Ticks, nm.data.data, 0);
                         SendMessage(nm, c.Value);
                     }
@@ -174,7 +181,7 @@ namespace DarkNetworkUDP
             {
                 return;
             }
-            NetworkMessage nm = NetworkMessage.Create(-2, 8);
+            NetworkMessage nm = NetworkMessage.Create(-2, 8, NetworkMessageType.UNORDERED_UNRELIABLE);
             Array.Copy(data.data, 0, nm.data.data, 0, data.Length);
             SendMessage(nm, connection);
         }
@@ -223,7 +230,7 @@ namespace DarkNetworkUDP
                 connection.receiveOrderID = orderID;
                 ByteArray data2 = ByteRecycler.GetObject(data.Length - 4);
                 Array.Copy(data.data, 4, data2.data, 0, data2.Length);
-                Handle(data2.data, data2.Length, connection.remoteEndpoint);
+                HandleRaw(data2.data, data2.Length, connection.remoteEndpoint);
                 ByteRecycler.ReleaseObject(data2);
             }
         }
@@ -246,9 +253,10 @@ namespace DarkNetworkUDP
             }
             lock (messages)
             {
-                foreach (NetworkMessage nm in messages)
+                foreach (QueuedMessage<T> qm in messages)
                 {
-                    HandleReal(nm);
+                    HandleReal(qm.networkMessage, qm.connection);
+                    Recycler<QueuedMessage<T>>.ReleaseObject(qm);
                 }
                 messages.Clear();
             }

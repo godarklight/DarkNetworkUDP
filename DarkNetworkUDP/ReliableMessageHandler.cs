@@ -7,18 +7,16 @@ namespace DarkNetworkUDP
 {
     public class ReliableMessageHandler<T>
     {
-        private class BoxedLong
-        {
-            public long value;
-        }
-        private HashSet<int> receivePartsLeft = new HashSet<int>();
-        private ByteArray receivingMessage = null;
-        private Queue<NetworkMessage> sendingMessages = new Queue<NetworkMessage>();
-        private NetworkMessage sendingMessage = null;
-        private int receivingID = 0;
-        private int sendingID = 0;
-        private Dictionary<int, BoxedLong> partSendTime = new Dictionary<int, BoxedLong>();
-        private int partSendTotal = 0;
+        private Dictionary<int, ReliableMessageReceiveTracking> receivingMessages = new Dictionary<int, ReliableMessageReceiveTracking>();
+        private Dictionary<int, ReliableMessageSendTracking<T>> sendingMessages = new Dictionary<int, ReliableMessageSendTracking<T>>();
+        private int unorderedReceiveID = 0;
+        private int orderedReceiveID = 0;
+        //We start at ID 1 because 0 and -0 turns out to be the same number
+        private int unorderedSendingID = 1;
+        private int orderedSendingID = 1;
+        //Message queue for ordered reliable messages
+        private Dictionary<int, NetworkMessage> orderedHandleMessages = new Dictionary<int, NetworkMessage>();
+        private int orderedHandleID = 0;
         private Connection<T> connection;
         private NetworkHandler<T> handler;
         public ReliableMessageHandler(Connection<T> connection, NetworkHandler<T> handler)
@@ -33,7 +31,19 @@ namespace DarkNetworkUDP
             {
                 return;
             }
-            sendingMessages.Enqueue(nm);
+            lock (sendingMessages)
+            {
+                ReliableMessageSendTracking<T> rmst = ReliableMessageSendTracking<T>.Create();
+                rmst.Setup(nm);
+                if (nm.sendType == NetworkMessageType.UNORDERED_RELIABLE)
+                {
+                    sendingMessages.Add(unorderedSendingID++, rmst);
+                }
+                if (nm.sendType == NetworkMessageType.ORDERED_RELIABLE)
+                {
+                    sendingMessages.Add(-(orderedSendingID++), rmst);
+                }
+            }
         }
 
         public void Send()
@@ -42,96 +52,36 @@ namespace DarkNetworkUDP
             {
                 return;
             }
-            if (sendingMessage == null && sendingMessages.Count > 0)
+
+            int removeID = -1;
+            foreach (KeyValuePair<int, ReliableMessageSendTracking<T>> kvp in sendingMessages)
             {
-                sendingMessage = sendingMessages.Dequeue();
-                int totalMessageBytes = 12;
-                if (sendingMessage.data != null && sendingMessage.data.Length > 0)
+                while (connection.queuedOut < 64 * 1024)
                 {
-                    totalMessageBytes = 12 + sendingMessage.data.Length;
-                }
-                partSendTotal = (totalMessageBytes + 12) / 500;
-                int lastSplit = (totalMessageBytes + 12) % 500;
-                if (lastSplit > 0)
-                {
-                    partSendTotal++;
-                }
-                lock (partSendTime)
-                {
-                    for (int i = 0; i < partSendTotal; i++)
+                    NetworkMessage nm = kvp.Value.GetMessage(kvp.Key, connection);
+                    if (nm != null)
                     {
-                        BoxedLong boxedLong = Recycler<BoxedLong>.GetObject();
-                        boxedLong.value = 0;
-                        partSendTime.Add(i, boxedLong);
+                        connection.handler.SendMessage(nm, connection);
                     }
+                    else
+                    {
+                        if (kvp.Value.finished)
+                        {
+                            removeID = kvp.Key;
+                        }
+                        break;
+                    }
+                }
+                if (connection.queuedOut >= 64 * 1024)
+                {
+                    break;
                 }
             }
-            if (sendingMessage != null)
+            if (removeID != -1)
             {
-                if (connection.queuedOut > (64 * 1024))
+                lock (sendingMessages)
                 {
-                    return;
-                }
-                long currentTime = DateTime.UtcNow.Ticks;
-                long latency = connection.avgLatency;
-                long minLatency = 10 * TimeSpan.TicksPerMillisecond;
-                if (latency < minLatency)
-                {
-                    latency = minLatency;
-                }
-                //Transmit a piece every 1.5RTT if we haven't got an ACK for it.
-                latency = (long)(latency * 1.5d);
-                long sendIfUnder = currentTime - latency;
-                lock (partSendTime)
-                {
-                    int totalLength = 12;
-                    if (sendingMessage.data != null && sendingMessage.data.Length > 0)
-                    {
-                        totalLength = sendingMessage.data.Length + 12;
-                    }
-                    foreach (KeyValuePair<int, BoxedLong> kvp in partSendTime)
-                    {
-                        if (kvp.Value.value < sendIfUnder)
-                        {
-                            partSendTime[kvp.Key].value = currentTime;
-                            int bytesToSend = 500;
-                            if (kvp.Key == (partSendTotal - 1))
-                            {
-                                bytesToSend = totalLength % 500;
-                            }
-                            NetworkMessage nm = NetworkMessage.Create(-4, 12 + bytesToSend);
-                            DarkUtils.WriteInt32ToByteArray(sendingID, nm.data.data, 0);
-                            DarkUtils.WriteInt32ToByteArray(kvp.Key, nm.data.data, 4);
-                            if (sendingMessage.data != null)
-                            {
-                                DarkUtils.WriteInt32ToByteArray(totalLength, nm.data.data, 8);
-                                if (kvp.Key == 0)
-                                {
-                                    DarkUtils.WriteMagicHeader(nm.data.data, 12);
-                                    DarkUtils.WriteInt32ToByteArray(sendingMessage.type, nm.data.data, 16);
-                                    DarkUtils.WriteInt32ToByteArray(sendingMessage.data.Length, nm.data.data, 20);
-                                    Array.Copy(sendingMessage.data.data, 0, nm.data.data, 24, bytesToSend - 12);
-                                }
-                                else
-                                {
-                                    Array.Copy(sendingMessage.data.data, (kvp.Key * 500) - 12, nm.data.data, 12, bytesToSend);
-                                }
-                            }
-                            else
-                            {
-                                DarkUtils.WriteInt32ToByteArray(12, nm.data.data, 8);
-                                DarkUtils.WriteMagicHeader(nm.data.data, 12);
-                                DarkUtils.WriteInt32ToByteArray(sendingMessage.type, nm.data.data, 16);
-                                DarkUtils.WriteInt32ToByteArray(0, nm.data.data, 20);
-                            }
-                            handler.SendMessage(nm, connection);
-                            //Only queue up 64kb at a time
-                            if (connection.queuedOut > (64 * 1024))
-                            {
-                                return;
-                            }
-                        }
-                    }
+                    sendingMessages.Remove(removeID);
                 }
             }
         }
@@ -149,54 +99,119 @@ namespace DarkNetworkUDP
             int recvSendingID = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(data.data, 0));
             int recvPartID = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(data.data, 4));
             int recvLength = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(data.data, 8));
-            if (recvSendingID <= receivingID)
+            //Always send an ACK back immediately
+            NetworkMessage nm = NetworkMessage.Create(-5, 8, NetworkMessageType.UNORDERED_UNRELIABLE);
+            Array.Copy(data.data, 0, nm.data.data, 0, 8);
+            handler.SendMessage(nm, connection);
+
+            ReliableMessageReceiveTracking rmrt = null;
+            if (receivingMessages.ContainsKey(recvSendingID))
             {
-                NetworkMessage nm = NetworkMessage.Create(-5, 8);
-                DarkUtils.WriteInt32ToByteArray(recvSendingID, nm.data.data, 0);
-                DarkUtils.WriteInt32ToByteArray(recvPartID, nm.data.data, 4);
-                handler.SendMessage(nm, connection);
+                rmrt = receivingMessages[recvSendingID];
             }
-            if (receivingMessage == null && recvSendingID == receivingID)
+            //Received either a new chunk or a duplicate, if the messageID is higher than what we have received, it's new.
+            if (rmrt == null)
             {
-                receivingMessage = ByteRecycler.GetObject(recvLength);
-                int numberOfParts = recvLength / 500;
-                if (recvLength % 500 != 0)
+                if (recvSendingID > 0)
                 {
-                    numberOfParts++;
-                }
-                for (int i = 0; i < numberOfParts; i++)
-                {
-                    receivePartsLeft.Add(i);
-                }
-            }
-            lock (receivePartsLeft)
-            {
-                if (receivePartsLeft.Contains(recvPartID))
-                {
-                    int startIndex = recvPartID * 500;
-                    int bytesToCopy = recvLength - startIndex;
-                    if (bytesToCopy > 500)
-                    {
-                        bytesToCopy = 500;
-                    }
-                    if (data.Length < 12 + bytesToCopy)
+                    int distance = recvSendingID - unorderedReceiveID;
+                    //A message in the past (doesn't detect wrap around)
+                    bool fromThePast = distance < 0;
+                    //A future message received before we have wrapped around
+                    bool massivelyInPast = -distance > (Int32.MaxValue / 4);
+                    //A past message received when we have wrapped around
+                    bool massivelyInFuture = distance > (Int32.MaxValue / 4);
+                    if (fromThePast && !massivelyInPast || massivelyInFuture)
                     {
                         return;
                     }
-                    Array.Copy(data.data, 12, receivingMessage.data, startIndex, bytesToCopy);
-                    receivePartsLeft.Remove(recvPartID);
-                    if (receivePartsLeft.Count == 0)
+                    while (recvSendingID != unorderedReceiveID)
                     {
-                        handler.Handle(receivingMessage.data, receivingMessage.Length, connection.remoteEndpoint);
-                        ByteRecycler.ReleaseObject(receivingMessage);
-                        receivingMessage = null;
-                        receivingID++;
-                        if (receivingID == Int32.MaxValue)
+                        if (unorderedReceiveID == Int32.MaxValue)
                         {
-                            receivingID = 0;
+                            unorderedReceiveID = 0;
+                        }
+                        unorderedReceiveID++;
+                        rmrt = ReliableMessageReceiveTracking.Create();
+                        receivingMessages.Add(unorderedReceiveID, rmrt);
+                    }
+                }
+                else
+                {
+                    int distance = -recvSendingID - orderedReceiveID;
+                    //A message in the past (doesn't detect wrap around)
+                    bool fromThePast = distance < 0;
+                    //A future message received before we have wrapped around
+                    bool massivelyInPast = -distance > (Int32.MaxValue / 4);
+                    //A past message received when we have wrapped around
+                    bool massivelyInFuture = distance > (Int32.MaxValue / 4);
+                    if (fromThePast && !massivelyInPast || massivelyInFuture)
+                    {
+                        return;
+                    }
+                    while (-recvSendingID != orderedReceiveID)
+                    {
+                        if (orderedReceiveID == Int32.MaxValue)
+                        {
+                            orderedReceiveID = 0;
+                        }
+                        orderedReceiveID++;
+                        rmrt = ReliableMessageReceiveTracking.Create();
+                        lock (receivingMessages)
+                        {
+                            receivingMessages.Add(-orderedReceiveID, rmrt);
                         }
                     }
                 }
+                rmrt = receivingMessages[recvSendingID];
+            }
+
+            //Fist setup if needed
+            if (rmrt.networkMessage == null)
+            {
+                if (recvSendingID > 0)
+                {
+                    rmrt.Setup(recvLength, NetworkMessageType.UNORDERED_RELIABLE);
+                }
+                else
+                {
+                    rmrt.Setup(recvLength, NetworkMessageType.ORDERED_RELIABLE);
+                }
+            }
+
+            //Handle incoming data
+            rmrt.Handle(recvPartID, recvLength, data);
+
+            //We have all the parts
+            if (rmrt.receivePartsLeft == 0)
+            {
+                if (recvPartID > 0)
+                {
+                    handler.Handle(rmrt.networkMessage, connection);
+                }
+                else
+                {
+                    //This message is received in order
+                    if (-recvSendingID == orderedHandleID)
+                    {
+                        orderedHandleID++;
+                        handler.Handle(rmrt.networkMessage, connection);
+                    }
+                    else
+                    {
+                        //This message is received out of order and we need to hold onto it
+                        orderedHandleMessages.Add(-recvSendingID, rmrt.networkMessage);
+                    }
+                    //If a message fills the missing hole this can play out.
+                    while (orderedHandleMessages.ContainsKey(orderedHandleID))
+                    {
+                        NetworkMessage handleMessage = orderedHandleMessages[orderedHandleID];
+                        orderedHandleMessages.Remove(orderedHandleID);
+                        handler.Handle(handleMessage, connection);
+                        orderedHandleID++;
+                    }
+                }
+                rmrt.Destroy();
             }
         }
 
@@ -211,77 +226,54 @@ namespace DarkNetworkUDP
                 return;
             }
             int recvAckReliableID = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(data.data, 0));
-            if (sendingID != recvAckReliableID)
+            ReliableMessageSendTracking<T> rmst = null;
+            if (sendingMessages.ContainsKey(recvAckReliableID))
             {
-                return;
+                rmst = sendingMessages[recvAckReliableID];
             }
             int recvAckPartID = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(data.data, 4));
-            lock (partSendTime)
+            if (rmst != null)
             {
-                if (partSendTime.ContainsKey(recvAckPartID))
+                rmst.ReceiveACK(recvAckPartID);
+                //Increase the speed because we got an ACK
+                connection.speed += 500;
+                if (connection.speed > Connection<T>.MAX_SPEED)
                 {
-                    Recycler<BoxedLong>.ReleaseObject(partSendTime[recvAckPartID]);
-                    partSendTime.Remove(recvAckPartID);
+                    connection.speed = Connection<T>.MAX_SPEED;
                 }
-                if (partSendTime.Count == 0)
+                if (rmst.finished)
                 {
-                    int usageLeft = Interlocked.Decrement(ref sendingMessage.usageCount);
-                    if (usageLeft == 0)
+                    lock (sendingMessages)
                     {
-                        if (sendingMessage.data != null)
-                        {
-                            ByteRecycler.ReleaseObject(sendingMessage.data);
-                        }
-                        Recycler<NetworkMessage>.ReleaseObject(sendingMessage);
+                        sendingMessages.Remove(recvAckReliableID);
                     }
-                    sendingMessage = null;
-                    sendingID++;
-                    if (sendingID == Int32.MaxValue)
-                    {
-                        sendingID = 0;
-                    }
+                    rmst.Destroy();
                 }
             }
         }
 
         public void ReleaseAllObjects()
         {
-            if (sendingMessage != null)
+            lock (receivingMessages)
             {
-                int usageLeft = Interlocked.Decrement(ref sendingMessage.usageCount);
-                if (usageLeft == 0)
+                foreach (KeyValuePair<int, ReliableMessageReceiveTracking> kvp in receivingMessages)
                 {
-                    if (sendingMessage.data != null)
-                    {
-                        ByteRecycler.ReleaseObject(sendingMessage.data);
-                    }
-                    Recycler<NetworkMessage>.ReleaseObject(sendingMessage);
+                    kvp.Value.Destroy();
                 }
+                receivingMessages.Clear();
             }
-            while (sendingMessages.Count > 0)
+            lock (sendingMessages)
             {
-                NetworkMessage dropMessage = sendingMessages.Dequeue();
-                int usageLeft = Interlocked.Decrement(ref dropMessage.usageCount);
-                if (usageLeft == 0)
+                foreach (KeyValuePair<int, ReliableMessageSendTracking<T>> kvp in sendingMessages)
                 {
-                    if (dropMessage.data != null)
-                    {
-                        ByteRecycler.ReleaseObject(dropMessage.data);
-                    }
-                    Recycler<NetworkMessage>.ReleaseObject(dropMessage);
+                    kvp.Value.Destroy();
                 }
+                sendingMessages.Clear();
             }
-            if (receivingMessage != null)
-            {
-                ByteRecycler.ReleaseObject(receivingMessage);
-                receivingMessage = null;
-            }            
-            foreach (BoxedLong bl in partSendTime.Values)
-            {
-                Recycler<BoxedLong>.ReleaseObject(bl);
-            }
-            partSendTime.Clear();
-            receivePartsLeft.Clear();
+            unorderedReceiveID = 0;
+            orderedReceiveID = 0;
+            unorderedSendingID = 1;
+            orderedSendingID = 1;
         }
     }
 }

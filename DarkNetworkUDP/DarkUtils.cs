@@ -26,9 +26,16 @@ namespace DarkNetworkUDP
         public static void WriteMagicHeader(byte[] data, int index)
         {
             data[index] = 68;
-            data[index + 1] = 65; 
+            data[index + 1] = 65;
             data[index + 2] = 82;
             data[index + 3] = 75;
+        }
+
+        public static void WriteInt16ToByteArray(short number, byte[] data, int index)
+        {
+            ushort unumber = (ushort)number;
+            data[index] = (byte)((unumber >> 8) & 0xFF);
+            data[index + 1] = (byte)((unumber) & 0xFF);
         }
         public static void WriteInt32ToByteArray(int number, byte[] data, int index)
         {

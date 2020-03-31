@@ -12,6 +12,7 @@ namespace DarkNetworkTest
         private byte[] randomBytes = new byte[5 * 1024 * 1024 - 12];
         private int freeID = 1;
         private int relayCount = 0;
+        private bool running = true;
         public void Run()
         {
             Random r = new Random();
@@ -27,24 +28,25 @@ namespace DarkNetworkTest
             IPAddress netAddr = IPAddress.Parse("2403:5800:9100:5b00:76da:38ff:fea3:9dbe");
             dn.SetupClient(new IPEndPoint(netAddr, 12345), handler);
             Thread.Sleep(1000);
-            NetworkMessage nmbig = NetworkMessage.Create(1, randomBytes.Length);
-            nmbig.reliable = true;
+            NetworkMessage nmbig = NetworkMessage.Create(1, randomBytes.Length, NetworkMessageType.UNORDERED_RELIABLE);
             Array.Copy(randomBytes, 0, nmbig.data.data, 0, randomBytes.Length);
             handler.SendMessage(nmbig);
             int messageID = 0;
-            while (true)
+            while (running)
             {
-                NetworkMessage nm = NetworkMessage.Create(0, 2048);
+                NetworkMessage nm = NetworkMessage.Create(0, 2048, NetworkMessageType.UNORDERED_UNRELIABLE);
                 //nm.ordered = true;
                 byte[] sendBytes = Encoding.UTF8.GetBytes("Message " + messageID++);
                 Array.Copy(sendBytes, 0, nm.data.data, 0, sendBytes.Length);
                 nm.data.size = sendBytes.Length;
                 handler.SendMessage(nm);
-                Recycler<NetworkMessage>.GarbageCollect(500, 1000);
-                ByteRecycler.GarbageCollect(2048, 500, 1000);
-                ByteRecycler.GarbageCollect(128 * 1024 * 1024, 2, 4);
+                //Recycler<NetworkMessage>.GarbageCollect(500, 1000);
+                //ByteRecycler.GarbageCollect(2048, 500, 1000);
+                //ByteRecycler.GarbageCollect(128 * 1024 * 1024, 2, 4);
+                //PrintRecyclerStats();
                 Thread.Sleep(1000);
             }
+            dn.Shutdown();
         }
 
         private StateObject Connected(Connection<StateObject> connection)
@@ -57,8 +59,8 @@ namespace DarkNetworkTest
 
         private void Disconnected(Connection<StateObject> connection)
         {
+            running = false;
             Console.WriteLine(connection.state.id + " disconnected.");
-            PrintRecyclerStats();
         }
 
         private void GotMessage(ByteArray message, Connection<StateObject> connection)
@@ -67,7 +69,7 @@ namespace DarkNetworkTest
             Console.WriteLine("Got message: " + messageData + " on connection " + connection.state.id);
             Decimal latencyMS = Math.Round(connection.GetLatency() / (Decimal)TimeSpan.TicksPerMillisecond, 2);
             Console.WriteLine("Latency: " + connection.GetLatency() + ", ms: " + latencyMS);
-            PrintRecyclerStats();
+            Console.WriteLine("Speed: " + connection.GetSpeed());
         }
 
         private void ReliableReceive(ByteArray message, Connection<StateObject> connection)
@@ -85,8 +87,7 @@ namespace DarkNetworkTest
             if (matches && relayCount < 10)
             {
                 relayCount++;
-                NetworkMessage bigmessage = NetworkMessage.Create(1, randomBytes.Length);
-                bigmessage.reliable = true;
+                NetworkMessage bigmessage = NetworkMessage.Create(1, randomBytes.Length, NetworkMessageType.UNORDERED_RELIABLE);
                 Array.Copy(randomBytes, 0, bigmessage.data.data, 0, randomBytes.Length);
                 connection.handler.SendMessage(bigmessage, connection);
             }

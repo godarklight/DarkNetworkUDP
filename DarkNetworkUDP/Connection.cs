@@ -7,14 +7,20 @@ namespace DarkNetworkUDP
     public class Connection<T>
     {
         internal bool destroyed = false;
-        //Speed in bytes/s. Defaulting to 1MB/s
-        internal long speed = 1024 * 1024;
+        //Minimum send rate
+        public const long MIN_SPEED = 64 * 1024;
+        //Maximum send rate
+        public const long MAX_SPEED = 20 * 1024 * 1024;
+        //Current send rate
+        internal long speed = 64 * 1024;
+
         //Amount of data we can send
         internal long tokens = 0;
         //Maximum amount of data to burst
-        internal long tokensMax = 1024 * 1024;
+        public const long TOKENS_MAX = 1024 * 1024;
         internal long lastTokensTime = 0;
         internal int queuedOut = 0;
+        internal int lostData = 0;
         //Heartbeat is 1 per second.
         internal long[] latencyArray = new long[60];
         internal long latencyTotal = 0;
@@ -53,6 +59,14 @@ namespace DarkNetworkUDP
         public long GetAverageLatency()
         {
             return avgLatency;
+        }
+
+        /// <summary>
+        /// Returns send speed in bytes/second
+        /// </summary>
+        public long GetSpeed()
+        {
+            return speed;
         }
     }
 }

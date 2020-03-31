@@ -98,7 +98,7 @@ namespace DarkNetworkUDP
                 while (socket.Poll(10000, SelectMode.SelectRead))
                 {
                     int bytesRead = socket.ReceiveFrom(receiveBuffer, 0, receiveBuffer.Length, SocketFlags.None, ref recvAddr);
-                    handler.Handle(receiveBuffer, bytesRead, recvAddr as IPEndPoint);
+                    handler.HandleRaw(receiveBuffer, bytesRead, recvAddr as IPEndPoint);
                 }
             }
             sendThread.Join();
@@ -119,21 +119,21 @@ namespace DarkNetworkUDP
                         Queue<NetworkMessage> sendMessageQueue = kvp.Value;
                         if (c.lastTokensTime == 0)
                         {
-                            c.tokens = c.tokensMax;
+                            c.tokens = Connection<T>.TOKENS_MAX;
                             c.lastTokensTime = DateTime.UtcNow.Ticks;
                         }
                         long ticksElapsed = DateTime.UtcNow.Ticks - c.lastTokensTime;
                         c.lastTokensTime = DateTime.UtcNow.Ticks;
                         c.tokens += (ticksElapsed * c.speed) / TimeSpan.TicksPerSecond;
-                        if (c.tokens > c.tokensMax)
+                        if (c.tokens > Connection<T>.TOKENS_MAX)
                         {
-                            c.tokens = c.tokensMax;
+                            c.tokens = Connection<T>.TOKENS_MAX;
                         }
                         while (sendMessageQueue.Count > 0)
                         {
                             //Speed control
                             NetworkMessage peekMessage = sendMessageQueue.Peek();
-                            if (!peekMessage.reliable && peekMessage.data != null)
+                            if (!peekMessage.IsReliable() && peekMessage.data != null)
                             {
                                 if (peekMessage.data.Length < c.tokens)
                                 {
@@ -151,21 +151,20 @@ namespace DarkNetworkUDP
                                 c.queuedOut -= nm.data.Length;
                             }
                             int sendBytes = 0;
-                            if (!nm.reliable)
+                            if (!nm.IsReliable())
                             {
                                 sendBytes = WriteRawMessageToBuffer(nm);
                             }
                             NetworkMessage queueMessage = nm;
-                            if (queueMessage.reliable)
+                            if (queueMessage.IsReliable())
                             {
                                 c.reliableMessageHandler.Queue(nm);
                                 c.reliableMessageHandler.Send();
                                 continue;
                             }
-                            if (queueMessage.ordered)
+                            if (queueMessage.sendType == NetworkMessageType.ORDERED_UNRELIABLE)
                             {
-                                c.tokens -= 4;
-                                nm = NetworkMessage.Create(-3, sendBytes + 4);
+                                nm = NetworkMessage.Create(-3, sendBytes + 4, NetworkMessageType.UNORDERED_UNRELIABLE);
                                 DarkUtils.WriteInt32ToByteArray(c.sendOrderID, nm.data.data, 0);
                                 Array.Copy(sendBuffer, 0, nm.data.data, 4, sendBytes);
                                 sendBytes = WriteRawMessageToBuffer(nm);
@@ -180,7 +179,7 @@ namespace DarkNetworkUDP
                             {
                                 throw new Exception("Failed to send complete message!");
                             }
-                            if (queueMessage.ordered)
+                            if (queueMessage.sendType == NetworkMessageType.ORDERED_UNRELIABLE)
                             {
                                 ByteRecycler.ReleaseObject(nm.data);
                                 Recycler<NetworkMessage>.ReleaseObject(nm);

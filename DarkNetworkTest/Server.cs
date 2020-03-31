@@ -23,15 +23,14 @@ namespace DarkNetworkTest
             int messageID = 0;
             while (true)
             {
-                NetworkMessage nm = NetworkMessage.Create(0, 2048);
-                nm.ordered = true;
+                NetworkMessage nm = NetworkMessage.Create(0, 2048, NetworkMessageType.ORDERED_UNRELIABLE);
                 byte[] sendBytes = Encoding.UTF8.GetBytes("Message " + messageID++);
                 Array.Copy(sendBytes, 0, nm.data.data, 0, sendBytes.Length);
                 nm.data.size = sendBytes.Length;
                 handler.SendMessageToAll(nm);
-                Recycler<NetworkMessage>.GarbageCollect(500, 1000);
-                ByteRecycler.GarbageCollect(2048, 500, 1000);
-                ByteRecycler.GarbageCollect(128 * 1024 * 1024, 2, 4);
+                //Recycler<NetworkMessage>.GarbageCollect(500, 1000);
+                //ByteRecycler.GarbageCollect(2048, 500, 1000);
+                //ByteRecycler.GarbageCollect(128 * 1024 * 1024, 2, 4);
                 Thread.Sleep(1000);
             }
         }
@@ -54,15 +53,15 @@ namespace DarkNetworkTest
             string messageData = Encoding.UTF8.GetString(message.data, 0, message.Length);
             Decimal latencyMS = Math.Round(connection.GetLatency() / (Decimal)TimeSpan.TicksPerMillisecond, 2);
             Console.WriteLine("Latency: " + connection.GetLatency() + ", ms: " + latencyMS);
-            PrintRecyclerStats();
+            Console.WriteLine("Speed: " + connection.GetSpeed());
+            //PrintRecyclerStats();
         }
 
 
         private void RelayReliable(ByteArray message, Connection<StateObject> connection)
         {
             Console.WriteLine("Relaying reliable message");
-            NetworkMessage nm = NetworkMessage.Create(1, message.Length);
-            nm.reliable = true;
+            NetworkMessage nm = NetworkMessage.Create(1, message.Length, NetworkMessageType.ORDERED_RELIABLE);
             Array.Copy(message.data, 0, nm.data.data, 0, message.Length);
             connection.handler.SendMessage(nm, connection);
         }

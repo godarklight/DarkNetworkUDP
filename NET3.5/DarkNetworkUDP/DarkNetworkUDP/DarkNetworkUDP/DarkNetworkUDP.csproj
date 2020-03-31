@@ -63,6 +63,18 @@
     <Compile Include="..\..\..\..\DarkNetworkUDP\ReliableMessageHandler.cs">
       <Link>ReliableMessageHandler.cs</Link>
     </Compile>
+    <Compile Include="..\..\..\..\DarkNetworkUDP\NetworkMessageType.cs">
+      <Link>NetworkMessageType.cs</Link>
+    </Compile>
+    <Compile Include="..\..\..\..\DarkNetworkUDP\ReliableMessageReceiveTracking.cs">
+      <Link>ReliableMessageReceiveTracking.cs</Link>
+    </Compile>
+    <Compile Include="..\..\..\..\DarkNetworkUDP\ReliableMessageSendTracking.cs">
+      <Link>ReliableMessageSendTracking.cs</Link>
+    </Compile>
+    <Compile Include="..\..\..\..\DarkNetworkUDP\QueuedMessage.cs">
+      <Link>QueuedMessage.cs</Link>
+    </Compile>
   </ItemGroup>
   <ItemGroup>
     <None Include="..\..\..\..\DarkNetworkUDP\DarkNetworkUDP.csproj">
