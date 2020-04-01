@@ -13,6 +13,7 @@ namespace DarkNetworkUDP
         private NetworkHandler<T> handler;
         private byte[] sendBuffer = new byte[2048];
         private byte[] receiveBuffer = new byte[2048];
+        private Queue<QueuedMessage<T>> sendHighPriorityMessages = new Queue<QueuedMessage<T>>();
         private Dictionary<Connection<T>, Queue<NetworkMessage>> sendMessages = new Dictionary<Connection<T>, Queue<NetworkMessage>>();
         Socket socket;
         private Thread receiveThread;
@@ -110,95 +111,121 @@ namespace DarkNetworkUDP
         {
             while (running)
             {
-                sendEvent.WaitOne(10);
-                lock (sendMessages)
+                sendEvent.WaitOne(50);
+                bool sending = true;
+                while (sending)
                 {
-                    foreach (KeyValuePair<Connection<T>, Queue<NetworkMessage>> kvp in sendMessages)
+                    sending = false;
+                    lock (sendHighPriorityMessages)
                     {
-                        Connection<T> c = kvp.Key;
-                        Queue<NetworkMessage> sendMessageQueue = kvp.Value;
-                        if (c.lastTokensTime == 0)
+                        while (sendHighPriorityMessages.Count > 0)
                         {
-                            c.tokens = Connection<T>.TOKENS_MAX;
-                            c.lastTokensTime = DateTime.UtcNow.Ticks;
-                        }
-                        long ticksElapsed = DateTime.UtcNow.Ticks - c.lastTokensTime;
-                        c.lastTokensTime = DateTime.UtcNow.Ticks;
-                        c.tokens += (ticksElapsed * c.speed) / TimeSpan.TicksPerSecond;
-                        if (c.tokens > Connection<T>.TOKENS_MAX)
-                        {
-                            c.tokens = Connection<T>.TOKENS_MAX;
-                        }
-                        while (sendMessageQueue.Count > 0)
-                        {
-                            //Speed control
-                            NetworkMessage peekMessage = sendMessageQueue.Peek();
-                            if (!peekMessage.IsReliable() && peekMessage.data != null)
+                            QueuedMessage<T> qm = sendHighPriorityMessages.Dequeue();
+                            if (qm.networkMessage.data != null)
                             {
-                                if (peekMessage.data.Length < c.tokens)
-                                {
-                                    c.tokens -= peekMessage.data.Length;
-                                }
-                                else
+                                qm.connection.queuedOut -= qm.networkMessage.data.Length;
+                            }
+                            ActualSendMessage(qm.networkMessage, qm.connection);
+                            Recycler<QueuedMessage<T>>.ReleaseObject(qm);
+                            sending = true;
+                        }
+                    }
+                    lock (sendMessages)
+                    {
+                        foreach (KeyValuePair<Connection<T>, Queue<NetworkMessage>> kvp in sendMessages)
+                        {
+                            Connection<T> connection = kvp.Key;
+                            Queue<NetworkMessage> sendQueue = kvp.Value;
+                            while (sendQueue.Count > 0)
+                            {
+                                if (sendHighPriorityMessages.Count > 0)
                                 {
                                     break;
                                 }
-                            }
-                            //Actual send
-                            NetworkMessage nm = sendMessageQueue.Dequeue();
-                            if (nm.data != null)
-                            {
-                                c.queuedOut -= nm.data.Length;
-                            }
-                            int sendBytes = 0;
-                            if (!nm.IsReliable())
-                            {
-                                sendBytes = WriteRawMessageToBuffer(nm);
-                            }
-                            NetworkMessage queueMessage = nm;
-                            if (queueMessage.IsReliable())
-                            {
-                                c.reliableMessageHandler.Queue(nm);
-                                c.reliableMessageHandler.Send();
-                                continue;
-                            }
-                            if (queueMessage.sendType == NetworkMessageType.ORDERED_UNRELIABLE)
-                            {
-                                nm = NetworkMessage.Create(-3, sendBytes + 4, NetworkMessageType.UNORDERED_UNRELIABLE);
-                                DarkUtils.WriteInt32ToByteArray(c.sendOrderID, nm.data.data, 0);
-                                Array.Copy(sendBuffer, 0, nm.data.data, 4, sendBytes);
-                                sendBytes = WriteRawMessageToBuffer(nm);
-                                c.sendOrderID++;
-                                if (c.sendOrderID == Int32.MaxValue)
+                                NetworkMessage peekMessage = sendQueue.Peek();
+                                //Reliable messages are broken up and do not create actual sends.
+                                if (peekMessage.IsReliable())
                                 {
-                                    c.sendOrderID = 0;
+                                    NetworkMessage reliableMessage = sendQueue.Dequeue();
+                                    if (reliableMessage.data != null)
+                                    {
+                                        connection.queuedOut -= reliableMessage.data.Length;
+                                    }
+                                    connection.reliableMessageHandler.Queue(reliableMessage);
+                                    connection.reliableMessageHandler.Send();
+                                    continue;
+                                }
+                                else
+                                {
+                                    if (peekMessage.data != null)
+                                    {
+                                        if (peekMessage.data.Length > connection.tokens)
+                                        {
+                                            //Not enough tokens to send
+                                            break;
+                                        }
+                                    }
+                                    NetworkMessage sendMessage = sendQueue.Dequeue();
+                                    if (sendMessage.data != null)
+                                    {
+                                        connection.queuedOut -= sendMessage.data.Length;
+                                    }
+                                    ActualSendMessage(sendMessage, connection);
+                                    sending = true;
                                 }
                             }
-                            int bytesSent = socket.SendTo(sendBuffer, 0, sendBytes, SocketFlags.None, c.remoteEndpoint);
-                            if (bytesSent != sendBytes)
+                            if (sendHighPriorityMessages.Count > 0)
                             {
-                                throw new Exception("Failed to send complete message!");
-                            }
-                            if (queueMessage.sendType == NetworkMessageType.ORDERED_UNRELIABLE)
-                            {
-                                ByteRecycler.ReleaseObject(nm.data);
-                                Recycler<NetworkMessage>.ReleaseObject(nm);
-                                nm = queueMessage;
-                            }
-                            int usageLeft = Interlocked.Decrement(ref nm.usageCount);
-                            if (usageLeft == 0)
-                            {
-                                if (nm.data != null)
-                                {
-                                    ByteRecycler.ReleaseObject(nm.data);
-                                }
-                                Recycler<NetworkMessage>.ReleaseObject(nm);
+                                break;
                             }
                         }
                     }
                 }
                 handler.SendHeartbeat();
             }
+        }
+
+        private NetworkMessage ConvertOrderedUnreliableMessage(NetworkMessage input, Connection<T> connection)
+        {
+            if (input.sendType != NetworkMessageType.ORDERED_UNRELIABLE)
+            {
+                return input;
+            }
+            int newSize = 12;
+            if (input.data != null)
+            {
+                newSize += input.data.Length;
+            }
+            NetworkMessage converted = NetworkMessage.Create(-3, newSize, NetworkMessageType.UNORDERED_UNRELIABLE);
+            DarkUtils.WriteInt32ToByteArray(connection.sendOrderID++, converted.data.data, 0);
+            if (connection.sendOrderID == Int32.MaxValue)
+            {
+                connection.sendOrderID = 0;
+            }
+            DarkUtils.WriteInt32ToByteArray(input.type, converted.data.data, 4);
+            DarkUtils.WriteInt32ToByteArray(newSize - 8, converted.data.data, 8);
+            if (input.data != null)
+            {
+                Array.Copy(input.data.data, 0, converted.data.data, 12, input.data.Length);
+            }
+            input.Destroy();
+            return input;
+        }
+
+        private void ActualSendMessage(NetworkMessage sendMessage, Connection<T> connection)
+        {
+            if (sendMessage.data != null)
+            {
+                connection.tokens -= sendMessage.data.Length;
+            }
+            NetworkMessage converted = ConvertOrderedUnreliableMessage(sendMessage, connection);
+            if (sendMessage.type == -4)
+            {
+                connection.reliableMessageHandler.RealSendPart(sendMessage);
+            }
+            int sendBytes = WriteRawMessageToBuffer(sendMessage);
+            sendMessage.Destroy();
+            int bytesSent = socket.SendTo(sendBuffer, 0, sendBytes, SocketFlags.None, connection.remoteEndpoint);
         }
 
         byte[] initialHeartBeat = new byte[20];
@@ -234,6 +261,22 @@ namespace DarkNetworkUDP
             running = false;
         }
 
+        public void SendRawHighPriority(NetworkMessage networkMessage, Connection<T> connection)
+        {
+            lock (sendHighPriorityMessages)
+            {
+                QueuedMessage<T> qm = Recycler<QueuedMessage<T>>.GetObject();
+                qm.networkMessage = networkMessage;
+                qm.connection = connection;
+                sendHighPriorityMessages.Enqueue(qm);
+                if (networkMessage.data != null)
+                {
+                    connection.queuedOut += networkMessage.data.Length;
+                }
+                sendEvent.Set();
+            }
+        }
+
         public void SendRaw(NetworkMessage networkMessage, Connection<T> connection)
         {
             lock (sendMessages)
@@ -261,16 +304,7 @@ namespace DarkNetworkUDP
                     while (dropMessages.Count > 0)
                     {
                         NetworkMessage dropMessage = dropMessages.Dequeue();
-                        int usageLeft = Interlocked.Decrement(ref dropMessage.usageCount);
-                        if (usageLeft == 0)
-                        {
-                            if (dropMessage.data != null)
-                            {
-                                ByteRecycler.ReleaseObject(dropMessage.data);
-                            }
-                            dropMessage.data = null;
-                            Recycler<NetworkMessage>.ReleaseObject(dropMessage);
-                        }
+                        dropMessage.Destroy();
                     }
                     sendMessages.Remove(connection);
                 }

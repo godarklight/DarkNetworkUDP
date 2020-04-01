@@ -13,9 +13,10 @@ namespace DarkNetworkTest
         private int freeID = 1;
         private int relayCount = 0;
         private bool running = true;
+        private Random r = new Random();
         public void Run()
         {
-            Random r = new Random();
+
             r.NextBytes(randomBytes);
             //ByteRecycler must be allowed to allocate the size of the biggest message
             ByteRecycler.AddPoolSize(128 * 1024 * 1024);
@@ -28,14 +29,13 @@ namespace DarkNetworkTest
             IPAddress netAddr = IPAddress.Parse("2403:5800:9100:5b00:76da:38ff:fea3:9dbe");
             dn.SetupClient(new IPEndPoint(netAddr, 12345), handler);
             Thread.Sleep(1000);
-            NetworkMessage nmbig = NetworkMessage.Create(1, randomBytes.Length, NetworkMessageType.UNORDERED_RELIABLE);
+            NetworkMessage nmbig = NetworkMessage.Create(1, randomBytes.Length, NetworkMessageType.ORDERED_RELIABLE);
             Array.Copy(randomBytes, 0, nmbig.data.data, 0, randomBytes.Length);
             handler.SendMessage(nmbig);
             int messageID = 0;
             while (running)
             {
-                NetworkMessage nm = NetworkMessage.Create(0, 2048, NetworkMessageType.UNORDERED_UNRELIABLE);
-                //nm.ordered = true;
+                NetworkMessage nm = NetworkMessage.Create(0, 2048, NetworkMessageType.ORDERED_UNRELIABLE);
                 byte[] sendBytes = Encoding.UTF8.GetBytes("Message " + messageID++);
                 Array.Copy(sendBytes, 0, nm.data.data, 0, sendBytes.Length);
                 nm.data.size = sendBytes.Length;
@@ -66,28 +66,41 @@ namespace DarkNetworkTest
         private void GotMessage(ByteArray message, Connection<StateObject> connection)
         {
             string messageData = Encoding.UTF8.GetString(message.data, 0, message.Length);
-            Console.WriteLine("Got message: " + messageData + " on connection " + connection.state.id);
             Decimal latencyMS = Math.Round(connection.GetLatency() / (Decimal)TimeSpan.TicksPerMillisecond, 2);
-            Console.WriteLine("Latency: " + connection.GetLatency() + ", ms: " + latencyMS);
-            Console.WriteLine("Speed: " + connection.GetSpeed());
+            //Console.WriteLine(messageData);
+            Console.WriteLine("Latency: " + latencyMS + "ms. Speed: " + connection.GetSpeed() / 1024 + " kB/s");
         }
 
         private void ReliableReceive(ByteArray message, Connection<StateObject> connection)
         {
             bool matches = true;
-            for (int i = 0; i < message.Length; i++)
+            if (message.Length != randomBytes.Length)
             {
-                if (message.data[i] != randomBytes[i])
+                matches = false;
+            }
+            else
+            {
+                for (int i = 0; i < message.Length; i++)
                 {
-                    matches = false;
-                    break;
+                    if (message.data[i] != randomBytes[i])
+                    {
+                        Console.WriteLine("Mismatch at byte " + i);
+                        matches = false;
+                        break;
+                    }
                 }
             }
             Console.WriteLine("Reliable matches: " + matches);
-            if (matches && relayCount < 10)
+            if (!matches)
+            {
+                throw new Exception("Breakpoint");
+            }
+            if (matches)
             {
                 relayCount++;
-                NetworkMessage bigmessage = NetworkMessage.Create(1, randomBytes.Length, NetworkMessageType.UNORDERED_RELIABLE);
+                Console.WriteLine("Sending chunk " + relayCount);                
+                r.NextBytes(randomBytes);
+                NetworkMessage bigmessage = NetworkMessage.Create(1, randomBytes.Length, NetworkMessageType.ORDERED_RELIABLE);
                 Array.Copy(randomBytes, 0, bigmessage.data.data, 0, randomBytes.Length);
                 connection.handler.SendMessage(bigmessage, connection);
             }

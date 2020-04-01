@@ -9,14 +9,13 @@ namespace DarkNetworkUDP
     {
         private Dictionary<int, ReliableMessageReceiveTracking> receivingMessages = new Dictionary<int, ReliableMessageReceiveTracking>();
         private Dictionary<int, ReliableMessageSendTracking<T>> sendingMessages = new Dictionary<int, ReliableMessageSendTracking<T>>();
-        private int unorderedReceiveID = 0;
-        private int orderedReceiveID = 0;
-        //We start at ID 1 because 0 and -0 turns out to be the same number
+        private int unorderedReceiveID = Int32.MaxValue;
+        private int orderedReceiveID = Int32.MaxValue;
         private int unorderedSendingID = 1;
         private int orderedSendingID = 1;
         //Message queue for ordered reliable messages
         private Dictionary<int, NetworkMessage> orderedHandleMessages = new Dictionary<int, NetworkMessage>();
-        private int orderedHandleID = 0;
+        private int orderedHandleID = 1;
         private Connection<T> connection;
         private NetworkHandler<T> handler;
         public ReliableMessageHandler(Connection<T> connection, NetworkHandler<T> handler)
@@ -37,11 +36,21 @@ namespace DarkNetworkUDP
                 rmst.Setup(nm);
                 if (nm.sendType == NetworkMessageType.UNORDERED_RELIABLE)
                 {
-                    sendingMessages.Add(unorderedSendingID++, rmst);
+                    sendingMessages.Add(unorderedSendingID, rmst);
+                    unorderedSendingID++;
+                    if (unorderedSendingID == Int32.MaxValue)
+                    {
+                        unorderedSendingID = 1;
+                    }
                 }
                 if (nm.sendType == NetworkMessageType.ORDERED_RELIABLE)
                 {
-                    sendingMessages.Add(-(orderedSendingID++), rmst);
+                    sendingMessages.Add(-(orderedSendingID), rmst);
+                    orderedSendingID++;
+                    if (orderedSendingID == Int32.MaxValue)
+                    {
+                        orderedSendingID = 1;
+                    }
                 }
             }
         }
@@ -102,7 +111,7 @@ namespace DarkNetworkUDP
             //Always send an ACK back immediately
             NetworkMessage nm = NetworkMessage.Create(-5, 8, NetworkMessageType.UNORDERED_UNRELIABLE);
             Array.Copy(data.data, 0, nm.data.data, 0, 8);
-            handler.SendMessage(nm, connection);
+            handler.SendMessageWithHighPriority(nm, connection);
 
             ReliableMessageReceiveTracking rmrt = null;
             if (receivingMessages.ContainsKey(recvSendingID))
@@ -116,7 +125,7 @@ namespace DarkNetworkUDP
                 {
                     int distance = recvSendingID - unorderedReceiveID;
                     //A message in the past (doesn't detect wrap around)
-                    bool fromThePast = distance < 0;
+                    bool fromThePast = distance <= 0;
                     //A future message received before we have wrapped around
                     bool massivelyInPast = -distance > (Int32.MaxValue / 4);
                     //A past message received when we have wrapped around
@@ -133,14 +142,17 @@ namespace DarkNetworkUDP
                         }
                         unorderedReceiveID++;
                         rmrt = ReliableMessageReceiveTracking.Create();
-                        receivingMessages.Add(unorderedReceiveID, rmrt);
+                        lock (receivingMessages)
+                        {
+                            receivingMessages.Add(unorderedReceiveID, rmrt);
+                        }
                     }
                 }
                 else
                 {
                     int distance = -recvSendingID - orderedReceiveID;
                     //A message in the past (doesn't detect wrap around)
-                    bool fromThePast = distance < 0;
+                    bool fromThePast = distance <= 0;
                     //A future message received before we have wrapped around
                     bool massivelyInPast = -distance > (Int32.MaxValue / 4);
                     //A past message received when we have wrapped around
@@ -185,7 +197,7 @@ namespace DarkNetworkUDP
             //We have all the parts
             if (rmrt.receivePartsLeft == 0)
             {
-                if (recvPartID > 0)
+                if (recvSendingID > 0)
                 {
                     handler.Handle(rmrt.networkMessage, connection);
                 }
@@ -195,6 +207,10 @@ namespace DarkNetworkUDP
                     if (-recvSendingID == orderedHandleID)
                     {
                         orderedHandleID++;
+                        if (orderedHandleID == Int32.MaxValue)
+                        {
+                            orderedHandleID = 0;
+                        }
                         handler.Handle(rmrt.networkMessage, connection);
                     }
                     else
@@ -209,9 +225,34 @@ namespace DarkNetworkUDP
                         orderedHandleMessages.Remove(orderedHandleID);
                         handler.Handle(handleMessage, connection);
                         orderedHandleID++;
+                        if (orderedHandleID == Int32.MaxValue)
+                        {
+                            orderedHandleID = 0;
+                        }
                     }
                 }
                 rmrt.Destroy();
+                lock (receivingMessages)
+                {
+                    receivingMessages.Remove(recvSendingID);
+                }
+            }
+        }
+
+        public void RealSendPart(NetworkMessage networkMessage)
+        {
+            if (connection.destroyed)
+            {
+                return;
+            }
+            int sendID = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(networkMessage.data.data, 0));
+            int partID = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(networkMessage.data.data, 4));
+            if (sendingMessages.ContainsKey(sendID))
+            {
+                if (sendingMessages[sendID].sendParts[partID] == -2)
+                {
+                    sendingMessages[sendID].sendParts[partID] = DateTime.UtcNow.Ticks;
+                }
             }
         }
 
@@ -235,12 +276,6 @@ namespace DarkNetworkUDP
             if (rmst != null)
             {
                 rmst.ReceiveACK(recvAckPartID);
-                //Increase the speed because we got an ACK
-                connection.speed += 500;
-                if (connection.speed > Connection<T>.MAX_SPEED)
-                {
-                    connection.speed = Connection<T>.MAX_SPEED;
-                }
                 if (rmst.finished)
                 {
                     lock (sendingMessages)
@@ -270,10 +305,11 @@ namespace DarkNetworkUDP
                 }
                 sendingMessages.Clear();
             }
-            unorderedReceiveID = 0;
-            orderedReceiveID = 0;
+            unorderedReceiveID = Int32.MaxValue;
+            orderedReceiveID = Int32.MaxValue;
             unorderedSendingID = 1;
             orderedSendingID = 1;
+            orderedHandleID = 1;
         }
     }
 }

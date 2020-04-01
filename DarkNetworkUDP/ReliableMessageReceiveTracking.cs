@@ -62,22 +62,23 @@ namespace DarkNetworkUDP
             if (!storedAlready)
             {
                 int bytesToCopy = 500;
-                //First part has the message ID
                 int startModify = 0;
                 if (partID == 0)
                 {
                     //The first message steals 4 bytes for the message type
+                    bytesToCopy = 496;                    
                     startModify = 4;
                     networkMessage.type = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(data.data, 12));
                 }
                 //Last part is a smaller copy.
                 if (partID == (receivePartsLength - 1))
                 {
-                    bytesToCopy = recvLength % 500;
+                    //The 4 bytes not sent in the first message will be in the last message, unless this is the first message
+                    bytesToCopy = (recvLength + (4 - startModify)) % 500;
                 }                
                 if (bytesToCopy > 0)
                 {
-                    Array.Copy(data.data, 12 + startModify, networkMessage.data.data, partID * 500 - (4 - startModify), bytesToCopy - startModify);
+                    Array.Copy(data.data, 12 + startModify, networkMessage.data.data, partID * 500 - (4 - startModify), bytesToCopy);
                 }
                 receiveParts[partID] = true;
                 receivePartsLeft--;

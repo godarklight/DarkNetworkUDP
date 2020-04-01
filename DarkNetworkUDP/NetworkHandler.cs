@@ -133,12 +133,7 @@ namespace DarkNetworkUDP
             {
                 callbacks[nm.type](nm.data, connection);
             }
-            if (nm.data != null)
-            {
-                ByteRecycler.ReleaseObject(nm.data);
-            }
-            nm.data = null;
-            Recycler<NetworkMessage>.ReleaseObject(nm);
+            nm.Destroy();
         }
 
         internal void SendHeartbeat()
@@ -157,8 +152,9 @@ namespace DarkNetworkUDP
                         c.Value.lastHeartbeatTime = currentTime;
                         NetworkMessage nm = NetworkMessage.Create(-1, 8, NetworkMessageType.UNORDERED_UNRELIABLE);
                         DarkUtils.WriteInt64ToByteArray(DateTime.UtcNow.Ticks, nm.data.data, 0);
-                        SendMessage(nm, c.Value);
+                        SendMessageWithHighPriority(nm, c.Value);
                     }
+                    RateControl<T>.Update(c.Value);
                     c.Value.reliableMessageHandler.Send();
                 }
                 foreach (Guid disconnectConnectionGuid in disconnectList)
@@ -183,7 +179,7 @@ namespace DarkNetworkUDP
             }
             NetworkMessage nm = NetworkMessage.Create(-2, 8, NetworkMessageType.UNORDERED_UNRELIABLE);
             Array.Copy(data.data, 0, nm.data.data, 0, data.Length);
-            SendMessage(nm, connection);
+            SendMessageWithHighPriority(nm, connection);
         }
         private void HandleLatency(ByteArray data, Connection<T> connection)
         {
@@ -208,7 +204,7 @@ namespace DarkNetworkUDP
 
         private void HandleOrdered(ByteArray data, Connection<T> connection)
         {
-            if (data.Length < 16)
+            if (data.Length < 12)
             {
                 return;
             }
@@ -228,10 +224,14 @@ namespace DarkNetworkUDP
             if (orderOK)
             {
                 connection.receiveOrderID = orderID;
-                ByteArray data2 = ByteRecycler.GetObject(data.Length - 4);
-                Array.Copy(data.data, 4, data2.data, 0, data2.Length);
-                HandleRaw(data2.data, data2.Length, connection.remoteEndpoint);
-                ByteRecycler.ReleaseObject(data2);
+                int messageType = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(data.data, 4));
+                int messageLength = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(data.data, 8));
+                NetworkMessage handleOrdered = NetworkMessage.Create(messageType, messageLength, NetworkMessageType.ORDERED_UNRELIABLE);
+                if (messageLength > 0 && messageLength == (data.Length + 12))
+                {
+                    Array.Copy(data.data, 12, handleOrdered.data.data, 0, messageLength);
+                }
+                Handle(handleOrdered, connection);
             }
         }
 
@@ -270,11 +270,7 @@ namespace DarkNetworkUDP
             }
             else
             {
-                if (nm.data != null)
-                {
-                    ByteRecycler.ReleaseObject(nm.data);
-                }
-                Recycler<NetworkMessage>.ReleaseObject(nm);
+                nm.Destroy();
             }
         }
 
@@ -292,11 +288,7 @@ namespace DarkNetworkUDP
                 }
                 else
                 {
-                    if (nm.data != null)
-                    {
-                        ByteRecycler.ReleaseObject(nm.data);
-                    }
-                    Recycler<NetworkMessage>.ReleaseObject(nm);
+                    nm.Destroy();
                 }
             }
 
@@ -310,15 +302,19 @@ namespace DarkNetworkUDP
             }
             else
             {
-                int usageLeft = Interlocked.Decrement(ref nm.usageCount);
-                if (usageLeft == 0)
-                {
-                    if (nm.data != null)
-                    {
-                        ByteRecycler.ReleaseObject(nm.data);
-                    }
-                    Recycler<NetworkMessage>.ReleaseObject(nm);
-                }
+                nm.Destroy();
+            }
+        }
+
+        internal void SendMessageWithHighPriority(NetworkMessage nm, Connection<T> c)
+        {
+            if (network != null && !c.destroyed)
+            {
+                network.SendRawHighPriority(nm, c);
+            }
+            else
+            {
+                nm.Destroy();
             }
         }
 

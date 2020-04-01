@@ -23,7 +23,7 @@ namespace DarkNetworkTest
             int messageID = 0;
             while (true)
             {
-                NetworkMessage nm = NetworkMessage.Create(0, 2048, NetworkMessageType.ORDERED_UNRELIABLE);
+                NetworkMessage nm = NetworkMessage.Create(0, 2048, NetworkMessageType.UNORDERED_UNRELIABLE);
                 byte[] sendBytes = Encoding.UTF8.GetBytes("Message " + messageID++);
                 Array.Copy(sendBytes, 0, nm.data.data, 0, sendBytes.Length);
                 nm.data.size = sendBytes.Length;
@@ -31,6 +31,7 @@ namespace DarkNetworkTest
                 //Recycler<NetworkMessage>.GarbageCollect(500, 1000);
                 //ByteRecycler.GarbageCollect(2048, 500, 1000);
                 //ByteRecycler.GarbageCollect(128 * 1024 * 1024, 2, 4);
+                //PrintRecyclerStats();
                 Thread.Sleep(1000);
             }
         }
@@ -46,22 +47,19 @@ namespace DarkNetworkTest
         private void Disconnected(Connection<StateObject> connection)
         {
             Console.WriteLine(connection.state.id + " disconnected.");
-            PrintRecyclerStats();
         }
         private void GotMessage(ByteArray message, Connection<StateObject> connection)
         {
             string messageData = Encoding.UTF8.GetString(message.data, 0, message.Length);
             Decimal latencyMS = Math.Round(connection.GetLatency() / (Decimal)TimeSpan.TicksPerMillisecond, 2);
-            Console.WriteLine("Latency: " + connection.GetLatency() + ", ms: " + latencyMS);
-            Console.WriteLine("Speed: " + connection.GetSpeed());
-            //PrintRecyclerStats();
+            Console.WriteLine("Latency: " + latencyMS + "ms. Speed: " + connection.GetSpeed() / 1024 + " kB/s");
         }
 
 
         private void RelayReliable(ByteArray message, Connection<StateObject> connection)
         {
             Console.WriteLine("Relaying reliable message");
-            NetworkMessage nm = NetworkMessage.Create(1, message.Length, NetworkMessageType.ORDERED_RELIABLE);
+            NetworkMessage nm = NetworkMessage.Create(1, message.Length, NetworkMessageType.UNORDERED_RELIABLE);
             Array.Copy(message.data, 0, nm.data.data, 0, message.Length);
             connection.handler.SendMessage(nm, connection);
         }

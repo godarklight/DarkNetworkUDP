@@ -83,7 +83,7 @@ namespace DarkNetworkUDP
             bool found = false;
             while (!found)
             {
-                if (sendParts[nextSendPart] != -1 && checkTime > sendParts[nextSendPart])
+                if (sendParts[nextSendPart] >= 0 && checkTime > sendParts[nextSendPart])
                 {
                     found = true;
                 }
@@ -117,18 +117,9 @@ namespace DarkNetworkUDP
                 //This is a retransmit, count the lost data
                 if (sendParts[nextSendPart] != 0)
                 {
-                    connection.lostData += thisSendSize;
-                    //If we have lost 64kb of data let's slow down our send speed
-                    if (connection.lostData > 64 * 1024)
-                    {
-                        connection.lostData = 0;
-                        connection.speed = connection.speed / 2;
-                        if (connection.speed < Connection<T>.MIN_SPEED)
-                        {
-                            connection.speed = Connection<T>.MIN_SPEED;
-                        }
-                    }
+                    connection.dataLoss += thisSendSize;
                 }
+                connection.dataSent += thisSendSize;
                 NetworkMessage sendMessage = NetworkMessage.Create(-4, 12 + thisSendSize, NetworkMessageType.UNORDERED_UNRELIABLE);
                 DarkUtils.WriteInt32ToByteArray(id, sendMessage.data.data, 0);
                 DarkUtils.WriteInt32ToByteArray(nextSendPart, sendMessage.data.data, 4);
@@ -146,7 +137,7 @@ namespace DarkNetworkUDP
                 {
                     Array.Copy(networkMessage.data.data, (nextSendPart * 500) - 4, sendMessage.data.data, 12, thisSendSize);
                 }
-                sendParts[nextSendPart] = DateTime.UtcNow.Ticks;
+                sendParts[nextSendPart] = -2;
                 nextSendPart++;
                 if (nextSendPart == sendPartsLength)
                 {

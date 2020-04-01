@@ -75,6 +75,9 @@
     <Compile Include="..\..\..\..\DarkNetworkUDP\QueuedMessage.cs">
       <Link>QueuedMessage.cs</Link>
     </Compile>
+    <Compile Include="..\..\..\..\DarkNetworkUDP\RateControl.cs">
+      <Link>RateControl.cs</Link>
+    </Compile>
   </ItemGroup>
   <ItemGroup>
     <None Include="..\..\..\..\DarkNetworkUDP\DarkNetworkUDP.csproj">
