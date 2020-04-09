@@ -63,32 +63,32 @@ namespace DarkNetworkUDP
             }
 
             int removeID = -1;
-            foreach (KeyValuePair<int, ReliableMessageSendTracking<T>> kvp in sendingMessages)
+            lock (sendingMessages)
             {
-                while (connection.queuedOut < 64 * 1024)
+                foreach (KeyValuePair<int, ReliableMessageSendTracking<T>> kvp in sendingMessages)
                 {
-                    NetworkMessage nm = kvp.Value.GetMessage(kvp.Key, connection);
-                    if (nm != null)
+                    while (connection.queuedOut < 64 * 1024)
                     {
-                        connection.handler.SendMessage(nm, connection);
-                    }
-                    else
-                    {
-                        if (kvp.Value.finished)
+                        NetworkMessage nm = kvp.Value.GetMessage(kvp.Key, connection);
+                        if (nm != null)
                         {
-                            removeID = kvp.Key;
+                            connection.handler.SendMessage(nm, connection);
                         }
+                        else
+                        {
+                            if (kvp.Value.finished)
+                            {
+                                removeID = kvp.Key;
+                            }
+                            break;
+                        }
+                    }
+                    if (connection.queuedOut >= 64 * 1024)
+                    {
                         break;
                     }
                 }
-                if (connection.queuedOut >= 64 * 1024)
-                {
-                    break;
-                }
-            }
-            if (removeID != -1)
-            {
-                lock (sendingMessages)
+                if (removeID != -1)
                 {
                     sendingMessages.Remove(removeID);
                 }
