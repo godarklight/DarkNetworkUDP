@@ -98,7 +98,15 @@ namespace DarkNetworkUDP
                 EndPoint recvAddr = any;
                 while (socket.Poll(10000, SelectMode.SelectRead))
                 {
-                    int bytesRead = socket.ReceiveFrom(receiveBuffer, 0, receiveBuffer.Length, SocketFlags.None, ref recvAddr);
+                    int bytesRead = 0;
+                    try
+                    {
+                        bytesRead = socket.ReceiveFrom(receiveBuffer, 0, receiveBuffer.Length, SocketFlags.None, ref recvAddr);
+                    }
+                    catch
+                    {
+                        handler.HandleRawError((IPEndPoint)recvAddr);
+                    }
                     handler.HandleRaw(receiveBuffer, bytesRead, recvAddr as IPEndPoint);
                 }
             }
@@ -225,7 +233,14 @@ namespace DarkNetworkUDP
             }
             int sendBytes = WriteRawMessageToBuffer(sendMessage);
             sendMessage.Destroy();
-            int bytesSent = socket.SendTo(sendBuffer, 0, sendBytes, SocketFlags.None, connection.remoteEndpoint);
+            try
+            {
+                int bytesSent = socket.SendTo(sendBuffer, 0, sendBytes, SocketFlags.None, connection.remoteEndpoint);
+            }
+            catch
+            {
+                handler.HandleRawError(connection);
+            }
         }
 
         byte[] initialHeartBeat = new byte[20];
@@ -309,6 +324,19 @@ namespace DarkNetworkUDP
                     sendMessages.Remove(connection);
                 }
             }
+        }
+
+        public int GetSendCount()
+        {
+            int retVal = 0;
+            lock (sendMessages)
+            {
+                foreach (KeyValuePair<Connection<T>, Queue<NetworkMessage>> thing in sendMessages)
+                {
+                    retVal += thing.Value.Count;
+                }
+            }
+            return retVal;
         }
     }
 }

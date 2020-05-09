@@ -108,6 +108,21 @@ namespace DarkNetworkUDP
             Handle(nm, connection);
         }
 
+        internal void HandleRawError(IPEndPoint endPoint)
+        {
+            Connection<T> disconnectConnection = GetConnection(endPoint);
+            if (disconnectConnection != null)
+            {
+                HandleRawError(disconnectConnection);
+            }
+        }
+
+        internal void HandleRawError(Connection<T> disconnectConnection)
+        {
+            //Will timeout in the heartbeat and be safely removed.
+            disconnectConnection.lastReceiveTime = 0;
+        }
+
         public void Handle(NetworkMessage nm, Connection<T> connection)
         {
             if (useMessagePump && nm.type >= 0)
